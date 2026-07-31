@@ -7,6 +7,10 @@ across companies.
 ![Python 3.11+](https://img.shields.io/badge/python-3.11+-3776AB?style=flat-square)
 ![runtime deps](https://img.shields.io/badge/runtime_dependencies-1-2ea44f?style=flat-square)
 
+**→ [Interactive results page](https://asp53826.github.io/xbrl-normalize/)** — step
+the resolver through five filers and watch it reject stale tags, then toggle
+mezzanine equity and watch the balance sheet stop balancing.
+
 > Microsoft tags revenue as `RevenueFromContractWithCustomerExcludingAssessedTax`.
 > Exxon uses `Revenues`. Microsoft *also* has a `Revenues` tag — it last carried
 > a value in 2010. Pick the wrong one and your 2026 revenue figure is off by a

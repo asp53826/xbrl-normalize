@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>xbrl-normalize — the same number, filed six different ways</title>
+<meta name="description" content="Why pulling revenue from SEC XBRL is hard: stale tags, omitted totals, mezzanine equity, and an accounting identity used as a correctness oracle.">
+<style>
+:root{
+  --bg:#050814; --panel:#0a1020; --panel2:#0d1628; --line:#20314d;
+  --text:#f4f8ff; --muted:#8da2bf; --cyan:#4de7ff; --blue:#4f8cff;
+  --violet:#9b7bff; --amber:#ffcb66; --green:#68f5ae; --red:#ff647c;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  --sans:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+}
+@media (prefers-color-scheme: light){
+  :root{--bg:#f7fbff;--panel:#fff;--panel2:#eef5ff;--line:#c4d5ea;
+        --text:#0b1730;--muted:#526a88;--cyan:#007d9d;--blue:#145fe0;
+        --violet:#7048d7;--amber:#9b6400;--green:#087a4c;--red:#c83755;}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+     line-height:1.6;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1120px;margin:0 auto;padding:0 20px}
+a{color:var(--cyan)}
+header{border-bottom:1px solid var(--line);
+       background:linear-gradient(180deg,var(--panel2),var(--panel))}
+header .wrap{padding:62px 20px 50px}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.18em;
+         color:var(--muted);text-transform:uppercase}
+h1{font-size:clamp(28px,4.8vw,46px);line-height:1.09;margin:14px 0 8px;letter-spacing:-.02em}
+.sub{color:var(--muted);font-size:17px;max-width:63ch;margin:0 0 24px}
+.pills{display:flex;gap:10px;flex-wrap:wrap}
+.pill{font-family:var(--mono);font-size:12px;padding:6px 12px;border-radius:999px;
+      border:1px solid var(--line);background:var(--panel);color:var(--muted)}
+.pill b{color:var(--text)}
+section{padding:54px 0;border-bottom:1px solid var(--line)}
+h2{font-size:clamp(21px,3vw,29px);margin:0 0 6px;letter-spacing:-.01em}
+.lede{color:var(--muted);max-width:74ch;margin:0 0 24px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px}
+.split{display:grid;gap:18px;grid-template-columns:1fr}
+@media(min-width:900px){.split{grid-template-columns:1.35fr 1fr}}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
+.tabs button{font-family:var(--mono);font-size:12.5px;padding:7px 13px;border-radius:8px;
+  border:1px solid var(--line);background:var(--panel2);color:var(--muted);cursor:pointer;
+  transition:border-color .16s,color .16s}
+.tabs button:hover{border-color:var(--cyan)}
+.tabs button[aria-selected=true]{border-color:var(--cyan);color:var(--cyan);
+  background:color-mix(in srgb,var(--cyan) 9%,transparent)}
+/* resolution walk */
+.walk{font-family:var(--mono);font-size:13px}
+.cand{display:flex;align-items:flex-start;gap:12px;padding:11px 12px;border-radius:9px;
+  border:1px solid var(--line);margin-bottom:8px;background:var(--panel2);
+  opacity:0;transform:translateX(-8px);animation:in .34s ease-out forwards}
+@keyframes in{to{opacity:1;transform:none}}
+.cand .mark{font-size:15px;line-height:1.25;min-width:16px}
+.cand .tag{flex:1;word-break:break-all}
+.cand .why{color:var(--muted);font-size:11.5px;display:block;margin-top:2px}
+.cand.rej{border-color:color-mix(in srgb,var(--red) 40%,var(--line))}
+.cand.rej .mark{color:var(--red)}
+.cand.acc{border-color:var(--green);background:color-mix(in srgb,var(--green) 10%,transparent)}
+.cand.acc .mark{color:var(--green)}
+.cand.skip{opacity:.45}
+.val{font-variant-numeric:tabular-nums;font-weight:700}
+.stat{font-family:var(--mono);margin-bottom:15px}
+.stat .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em}
+.stat .v{font-size:22px;font-weight:700;line-height:1.2;font-variant-numeric:tabular-nums}
+.good{color:var(--green)} .bad{color:var(--red)} .mid{color:var(--amber)}
+table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12.5px}
+th,td{padding:7px 9px;text-align:right;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.07em}
+tbody tr:hover{background:var(--panel2)}
+svg{display:block;width:100%;height:auto}
+.note{font-size:13.5px;color:var(--muted);margin-top:14px;max-width:78ch}
+.warn{border-left:3px solid var(--red);padding-left:15px}
+footer{padding:42px 0 60px;color:var(--muted);font-size:14px}
+.bar{height:26px;border-radius:5px;display:flex;overflow:hidden;margin:6px 0 4px}
+.bar span{display:block;transition:width .5s cubic-bezier(.2,.8,.3,1)}
+.legend{font-family:var(--mono);font-size:11.5px;color:var(--muted);
+  display:flex;gap:16px;flex-wrap:wrap;margin-top:6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}
+  .cand{opacity:1!important;transform:none!important}}
+</style>
+</head>
+<body>
+
+<header><div class="wrap">
+  <div class="eyebrow">asp53826 / xbrl-normalize</div>
+  <h1>Microsoft still files<br>a revenue tag from 2010.</h1>
+  <p class="sub">SEC XBRL is standardised in the sense that everyone uses the same
+    dictionary and nobody uses the same words. Take the first tag that exists and
+    you get Microsoft's FY2026 revenue as <b>62.5B</b> instead of <b>331.8B</b>.
+    This page walks the resolver, company by company.</p>
+  <div class="pills">
+    <span class="pill">25 <b>tests</b></span>
+    <span class="pill">102 <b>companies</b></span>
+    <span class="pill">identity exact <b>96.1%</b></span>
+    <span class="pill">3 tags cover revenue <b>55 / 37 / 4</b></span>
+    <span class="pill"><a href="https://github.com/asp53826/xbrl-normalize">source</a></span>
+  </div>
+</div></header>
+
+<!-- ══ resolver walk ═════════════════════════════════════════════════ -->
+<section>
+  <div class="wrap">
+    <h2>Watch the resolver work</h2>
+    <p class="lede">Candidate tags are tried in order. A tag only answers if it has
+      an observation <em>for the period being asked about</em> — existence is not
+      enough, and that single rule is what stops a decade-old tag from replying.</p>
+
+    <div class="tabs" id="tabs" role="tablist"></div>
+    <div class="split">
+      <div class="card">
+        <div style="font-family:var(--mono);font-size:12px;color:var(--muted);
+                    margin-bottom:12px" id="askline"></div>
+        <div class="walk" id="walk"></div>
+      </div>
+      <div class="card">
+        <div class="stat"><div class="k">resolved revenue</div>
+          <div class="v good" id="r-val">—</div></div>
+        <div class="stat"><div class="k">from tag</div>
+          <div class="v" style="font-size:12.5px;word-break:break-all" id="r-tag">—</div></div>
+        <div class="stat"><div class="k">naive: first tag that exists</div>
+          <div class="v bad" id="r-naive">—</div></div>
+        <div class="stat"><div class="k">error if you took it</div>
+          <div class="v bad" id="r-err">—</div></div>
+        <p class="note" style="margin-top:4px" id="r-note"></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ balance sheet ═════════════════════════════════════════════════ -->
+<section>
+  <div class="wrap">
+    <h2>The identity only closes with mezzanine equity</h2>
+    <p class="lede">Redeemable noncontrolling interests are contractually redeemable,
+      so they are not permanent equity — but they are not a liability either. They
+      sit between the two sections and are excluded from both totals. Toggle them
+      and watch the balance sheet stop balancing.</p>
+
+    <div class="split">
+      <div class="card">
+        <div class="tabs" id="bstabs" role="tablist"></div>
+        <div id="bsbars"></div>
+        <div class="legend">
+          <span><i style="background:var(--red)"></i>liabilities</span>
+          <span><i style="background:var(--amber)"></i>mezzanine equity</span>
+          <span><i style="background:var(--green)"></i>equity incl. NCI</span>
+          <span><i style="background:var(--muted)"></i>unexplained</span>
+        </div>
+        <div class="tabs" style="margin-top:16px">
+          <button id="mezz" aria-selected="true">mezzanine counted</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="stat"><div class="k">total assets</div>
+          <div class="v" id="b-assets">—</div></div>
+        <div class="stat"><div class="k">liabilities + mezzanine + equity</div>
+          <div class="v" id="b-sum">—</div></div>
+        <div class="stat"><div class="k">residual</div>
+          <div class="v" id="b-res">—</div></div>
+        <p class="note" style="margin-top:4px" id="b-note"></p>
+      </div>
+    </div>
+    <p class="note">Figures are rounded to 0.1B for display, so residuals below
+      about 0.05% are rounding rather than real gaps; the benchmark carries full
+      precision. Adding mezzanine equity fixed five companies and immediately broke
+      four others — the 31 filers whose liabilities are <em>derived</em> from the
+      combined total already had it inside that residual, so counting it again
+      double-counted. The derivation had to subtract it. Identity exact matches went
+      91.1% → 92.2% → <b>96.1%</b>.</p>
+  </div>
+</section>
+
+<!-- ══ coverage ══════════════════════════════════════════════════════ -->
+<section>
+  <div class="wrap">
+    <h2>Coverage, and who drags it down</h2>
+    <p class="lede">102 companies across banks, insurers, energy, retail, pharma,
+      industrials, utilities and tech. A tech-only sample would flatter these badly.</p>
+    <div class="split">
+      <div class="card"><svg id="cov" viewBox="0 0 620 400" role="img"
+        aria-label="Coverage of each canonical line item across 102 companies"></svg></div>
+      <div class="card warn">
+        <p class="note" style="margin:0 0 12px"><b>Banks lose the income statement.</b>
+          Wells Fargo, Morgan Stanley, Goldman and Truist resolve no revenue at all —
+          they present net interest income plus noninterest revenue and never tag a
+          top-line total.</p>
+        <p class="note" style="margin:0 0 12px">Current assets and liabilities sit at
+          79.4% for the same reason: banks and insurers do not present a classified
+          balance sheet. That is a gap in the concept, not the mapping.</p>
+        <p class="note" style="margin:0">A <code>revenue</code> line for a bank would
+          be an invention, so it is reported missing. <b>Missing is never silently
+          zero.</b></p>
+      </div>
+    </div>
+    <p class="note">Total liabilities reaches 100% only because 31 of 102 filers do
+      not tag it and it gets derived — the striped portion of that bar.</p>
+  </div>
+</section>
+
+<footer><div class="wrap">
+  <p><a href="https://github.com/asp53826/xbrl-normalize">github.com/asp53826/xbrl-normalize</a>
+   &nbsp;·&nbsp; MIT &nbsp;·&nbsp;
+   <a href="https://github.com/asp53826/xbrl-normalize/blob/main/DESIGN.md">design notes</a>
+   &nbsp;·&nbsp; <a href="https://github.com/asp53826">more systems</a></p>
+  <p>Every figure is measured output from the benchmark in this repository, run
+     against live SEC data.</p>
+</div></footer>
+
+<script>
+"use strict";
+const $=s=>document.querySelector(s);
+const NS="http://www.w3.org/2000/svg";
+const el=(t,a,x)=>{const n=document.createElementNS(NS,t);
+  for(const k in a)n.setAttribute(k,a[k]); if(x!=null)n.textContent=x; return n;};
+const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const B=v=>(v/1e9).toFixed(1)+"B";
+
+/* ── measured: what each filer's candidate tags actually hold ───────── */
+const CO=[
+ {t:"MSFT", name:"MICROSOFT CORP", fy:"FY2026 ending 2026-06-30",
+  cands:[
+   {tag:"Revenues", ok:false, last:"2010-06-30", val:62.5e9,
+    why:"present in the facts, but its last observation is from 2010"},
+   {tag:"RevenueFromContractWithCustomerExcludingAssessedTax", ok:true, val:331.8e9,
+    why:"has an FY2026 annual observation"},
+  ],
+  note:"The tag exists, so presence-order resolution answers with it — and returns "
+      +"a number from sixteen years earlier. Nothing about the output looks wrong."},
+
+ {t:"XOM", name:"EXXON MOBIL CORP", fy:"FY2025 ending 2025-12-31",
+  cands:[
+   {tag:"Revenues", ok:true, val:332.2e9, why:"has an FY2025 annual observation"},
+   {tag:"RevenueFromContractWithCustomerExcludingAssessedTax", ok:null, last:"2021-12-31",
+    val:276.7e9, why:"not reached — would have been stale since 2021 anyway"},
+  ],
+  note:"The mirror image of Microsoft. No fixed priority order is right for both, "
+      +"which is why order only breaks ties and the period check does the work."},
+
+ {t:"WMT", name:"WALMART INC.", fy:"FY2026 ending 2026-01-31",
+  cands:[
+   {tag:"Revenues", ok:true, val:713.2e9, why:"has an FY2026 observation — total revenue"},
+   {tag:"RevenueFromContractWithCustomerExcludingAssessedTax", ok:null, val:706.4e9,
+    why:"also current, but narrower: net sales only, excludes membership income"},
+  ],
+  note:"The one case where two candidates both cover the period. Order decides, and "
+      +"`Revenues` is first because the wider total is the comparable figure."},
+
+ {t:"JPM", name:"JPMORGAN CHASE & CO", fy:"FY2025 ending 2025-12-31",
+  cands:[
+   {tag:"Revenues", ok:true, val:182.4e9, why:"has an FY2025 observation"},
+  ],
+  note:"A bank resolves revenue but not cost of revenue, gross profit, operating "
+      +"income, current assets or current liabilities — it does not present a "
+      +"classified balance sheet. Six of nineteen lines come back missing, correctly."},
+
+ {t:"AAPL", name:"APPLE INC.", fy:"FY2025 ending 2025-09-27",
+  cands:[
+   {tag:"Revenues", ok:false, last:"2018-09-29", val:265.6e9,
+    why:"last annual observation 2018-09-29, three in total — abandoned after the "
+       +"2018 revenue standard"},
+   {tag:"RevenueFromContractWithCustomerExcludingAssessedTax", ok:true, val:416.2e9,
+    why:"has an FY2025 annual observation"},
+  ],
+  note:"Apple's fiscal year ends 2025-09-27, a 52/53-week calendar. Periods are "
+      +"discovered from the union of every annual-length duration, so this needs no "
+      +"special case. Note the tag counts: 3 annual observations against 21."},
+];
+
+/* ── measured: balance sheets, USD ─────────────────────────────────── */
+const BS=[
+ {t:"UNH", name:"UNITEDHEALTH GROUP", assets:309.6e9, liab:207.9e9, mezz:1.61e9,
+  eq:100.1e9, note:"Redeemable noncontrolling interests of 1.61B account for the gap "
+   +"exactly. Without them the balance sheet is out by 0.52%."},
+ {t:"PRU", name:"PRUDENTIAL FINANCIAL", assets:773.7e9, liab:738.2e9, mezz:2.79e9,
+  eq:32.8e9, note:"2.79B of temporary equity, matching the residual to the cent."},
+ {t:"WMT", name:"WALMART INC.", assets:284.668e9, liab:178.488e9, mezz:0.293e9,
+  eq:105.887e9, derived:true,
+  note:"Walmart tags no total liabilities at all, so it is derived as "
+   +"liabilities_and_equity − equity − mezzanine. Forget that last term and this "
+   +"is the company that breaks."},
+ {t:"BLK", name:"BLACKROCK INC.", assets:170.0e9, liab:108.5e9, mezz:0, eq:56.1e9,
+  unexplained:true,
+  note:"Off by 3.19% and no single instant tag in BlackRock's own filing accounts "
+   +"for it. Their tagged liabilities and equity simply do not sum to their own "
+   +"tagged total. Reported rather than forced to balance."},
+];
+
+/* ── measured: coverage ────────────────────────────────────────────── */
+const COV=[
+ ["Net income",100.0,102,0],["Total assets",100.0,102,0],
+ ["Total liabilities",100.0,71,31],["Total equity incl. NCI",100.0,102,0],
+ ["Operating cash flow",100.0,102,0],["Cash and equivalents",99.0,101,0],
+ ["Revenue",94.1,96,0],["Equity to parent",92.2,94,0],
+ ["Current assets",79.4,81,0],["Capital expenditure",79.4,81,0],
+ ["Operating income",66.7,68,0],["Gross profit",51.0,23,29],
+ ["Temporary equity",12.7,13,0],
+];
+
+/* ══ resolver walk ═════════════════════════════════════════════════ */
+let sel=0;
+(function(){
+  const tabs=$("#tabs");
+  CO.forEach((c,i)=>{
+    const b=document.createElement("button");
+    b.textContent=c.t; b.setAttribute("role","tab");
+    b.setAttribute("aria-selected", i===0);
+    b.addEventListener("click",()=>{sel=i;
+      [...tabs.children].forEach((x,j)=>x.setAttribute("aria-selected",j===i));
+      drawWalk();});
+    tabs.appendChild(b);
+  });
+})();
+
+function drawWalk(){
+  const c=CO[sel], w=$("#walk"); w.textContent="";
+  $("#askline").textContent=`resolve("revenue") for ${c.name} — ${c.fy}`;
+  let accepted=null, firstExisting=null;
+
+  c.cands.forEach((d,i)=>{
+    const row=document.createElement("div");
+    const state = d.ok===true ? "acc" : d.ok===false ? "rej" : "skip";
+    row.className="cand "+state;
+    row.style.animationDelay=(i*0.22)+"s";
+    const mark = d.ok===true?"✓" : d.ok===false?"✕" : "·";
+    row.innerHTML=`<span class="mark">${mark}</span><span class="tag">${d.tag}`
+      +`<span class="why">${d.why}</span></span>`
+      +(d.val!=null?`<span class="val" style="color:${
+          d.ok===true?css("--green"):d.ok===false?css("--red"):css("--muted")}">`
+          +`${B(d.val)}</span>`:"");
+    w.appendChild(row);
+    if(firstExisting===null && d.val!=null) firstExisting=d;
+    if(d.ok===true && !accepted) accepted=d;
+  });
+
+  $("#r-val").textContent = accepted?B(accepted.val):"—";
+  $("#r-tag").textContent = accepted?accepted.tag:"—";
+  const naive = firstExisting;
+  const wrong = naive && accepted && naive!==accepted;
+  $("#r-naive").textContent = naive?B(naive.val):"—";
+  $("#r-naive").className = "v "+(wrong?"bad":"good");
+  if(wrong){
+    const e=Math.abs(naive.val-accepted.val)/accepted.val;
+    $("#r-err").textContent="−"+(e*100).toFixed(1)+"%";
+    $("#r-err").className="v bad";
+  } else {
+    $("#r-err").textContent="none";
+    $("#r-err").className="v good";
+  }
+  $("#r-note").textContent=c.note;
+}
+drawWalk();
+
+/* ══ balance sheet ═════════════════════════════════════════════════ */
+let bsel=0, countMezz=true;
+(function(){
+  const tabs=$("#bstabs");
+  BS.forEach((c,i)=>{
+    const b=document.createElement("button");
+    b.textContent=c.t; b.setAttribute("role","tab");
+    b.setAttribute("aria-selected", i===0);
+    b.addEventListener("click",()=>{bsel=i;
+      [...tabs.children].forEach((x,j)=>x.setAttribute("aria-selected",j===i));
+      drawBS();});
+    tabs.appendChild(b);
+  });
+})();
+$("#mezz").addEventListener("click",e=>{
+  countMezz=!countMezz;
+  e.target.textContent=countMezz?"mezzanine counted":"mezzanine ignored";
+  e.target.setAttribute("aria-selected",countMezz);
+  drawBS();
+});
+
+function drawBS(){
+  const c=BS[bsel];
+  const mezz = countMezz? c.mezz : 0;
+  const sum = c.liab+mezz+c.eq;
+  const res = c.assets-sum;
+  const host=$("#bsbars"); host.textContent="";
+
+  const mk=(label,parts)=>{
+    const wrapEl=document.createElement("div");
+    wrapEl.innerHTML=`<div style="font-family:var(--mono);font-size:11.5px;
+      color:var(--muted);margin-top:12px">${label}</div>`;
+    const bar=document.createElement("div"); bar.className="bar";
+    const tot=parts.reduce((a,p)=>a+p[0],0);
+    for(const [v,col] of parts){
+      if(v<=0) continue;
+      const sp=document.createElement("span");
+      sp.style.width=(v/tot*100)+"%"; sp.style.background=col;
+      bar.appendChild(sp);
+    }
+    wrapEl.appendChild(bar);
+    host.appendChild(wrapEl);
+  };
+  mk(`assets — ${B(c.assets)}`, [[c.assets, css("--cyan")]]);
+  const parts=[[c.liab,css("--red")],[mezz,css("--amber")],[c.eq,css("--green")]];
+  if(res>c.assets*1e-9) parts.push([res,css("--muted")]);
+  mk(`liabilities + mezzanine + equity — ${B(sum)}`
+     + (res>c.assets*1e-9?`  ·  residual ${B(res)}`:""), parts);
+
+  $("#b-assets").textContent=B(c.assets);
+  $("#b-sum").textContent=B(sum);
+  const rel=Math.abs(res)/c.assets;
+  // figures below are rounded to 0.1B for display, so a residual under ~0.05%
+  // is rounding rather than a real gap. The benchmark carries full precision.
+  $("#b-res").textContent = rel<5e-4 ? "balances" : (rel*100).toFixed(2)+"%";
+  $("#b-res").className="v "+(rel<5e-4?"good":rel<0.01?"mid":"bad");
+  $("#b-note").textContent = c.unexplained
+    ? c.note
+    : (countMezz ? c.note
+      : `Mezzanine equity ignored: the sheet is now out by ${(rel*100).toFixed(2)}% `
+        +`— exactly the ${B(c.mezz)} of redeemable noncontrolling interests that `
+        +`belongs to neither side.`);
+}
+drawBS();
+
+/* ══ coverage chart ════════════════════════════════════════════════ */
+(function(){
+  const s=$("#cov"), W=620,H=400,L=150,R=52,T=16,B0=14;
+  const rowH=(H-T-B0)/COV.length, w=W-L-R;
+  COV.forEach(([name,pct,direct,derived],i)=>{
+    const y=T+i*rowH+rowH*0.2, h=rowH*0.56;
+    s.appendChild(el("text",{x:L-10,y:y+h*0.76,"text-anchor":"end",fill:css("--text"),
+      "font-size":11.5,"font-family":css("--mono")},name));
+    s.appendChild(el("rect",{x:L,y,width:w,height:h,rx:4,fill:css("--panel2")}));
+    const tot=direct+derived, full=w*pct/100;
+    const dw=tot?full*direct/tot:full;
+    const a=el("rect",{x:L,y,width:dw,height:h,rx:4,
+      fill:pct>=99?css("--green"):pct>=79?css("--cyan"):pct>=66?css("--amber"):css("--red")});
+    s.appendChild(a);
+    if(derived){
+      const b=el("rect",{x:L+dw,y,width:full-dw,height:h,rx:4,fill:css("--violet"),
+        opacity:.85});
+      s.appendChild(b);
+      s.appendChild(el("title",{},`${derived} of ${tot} derived from accounting relationships`));
+    }
+    s.appendChild(el("text",{x:L+full+7,y:y+h*0.76,fill:css("--muted"),
+      "font-size":11,"font-family":css("--mono")},pct.toFixed(1)+"%"));
+  });
+  s.appendChild(el("text",{x:L,y:H-2,fill:css("--muted"),"font-size":10.5,
+    "font-family":css("--mono")},"purple = value derived, not tagged by the filer"));
+})();
+</script>
+</body>
+</html>
